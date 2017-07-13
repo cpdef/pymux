@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
+#
 # This code is based on AjaxTerm/Web-Shell which included a fairly complete
 # vt100 implementation as well as a stable process multiplexer.
 # I made some small fixes, improved some small parts and added a Session class
 # which can be used by the widget.
 # License: GPL2
+#
+
+
 import sys
 import os
 import fcntl
@@ -17,13 +21,13 @@ import struct
 import select
 import subprocess
 
+import collections
+import itertools
+
 
 __version__ = "0.1"
 
-
 class Terminal(object):
-
-
     def __init__(self, w, h):
         self.w = w
         self.h = h
@@ -232,45 +236,12 @@ class Terminal(object):
         self.cx = 0
         self.cy = 0
         # Tab stops
-        self.tab_stops = range(0, self.w, 8)
+        self.tab_stops = list(range(0, self.w, 8))
 
 
     # UTF-8 functions
     def utf8_decode(self, d):
-        o = ''
-        for c in d:
-            char = ord(c)
-            if self.utf8_units_count != self.utf8_units_received:
-                self.utf8_units_received += 1
-                if (char & 0xc0) == 0x80:
-                    self.utf8_char = (self.utf8_char << 6) | (char & 0x3f)
-                    if self.utf8_units_count == self.utf8_units_received:
-                        if self.utf8_char<0x10000:
-                            o += unichr(self.utf8_char)
-                        self.utf8_units_count = self.utf8_units_received = 0
-                else:
-                    o += '?'
-                    while self.utf8_units_received:
-                        o += '?'
-                        self.utf8_units_received -= 1
-                    self.utf8_units_count = 0
-            else:
-                if (char & 0x80) == 0x00:
-                    o += c
-                elif (char & 0xe0) == 0xc0:
-                    self.utf8_units_count = 1
-                    self.utf8_char = char & 0x1f
-                elif (char & 0xf0) == 0xe0:
-                    self.utf8_units_count = 2
-                    self.utf8_char = char & 0x0f
-                elif (char & 0xf8) == 0xf0:
-                    self.utf8_units_count = 3
-                    self.utf8_char = char & 0x07
-                else:
-                    o += '?'
-        print("UTF-8",  o)
-        return o
-
+        return d.decode("utf-8")
 
     def utf8_charwidth(self, char):
         if char >= 0x2e80:
@@ -300,7 +271,7 @@ class Terminal(object):
     # Scrolling functions
     def scroll_area_up(self, y0, y1, n = 1):
         n = min(y1-y0, n)
-        self.poke(y0, 0, self.peek(y0 + n, 0, y1, self.w))
+        self.poke(y0, 0, self.peek(y0 + n, 0, y1, self.w))        
         self.clear(y1-n, 0, y1, self.w)
 
 
@@ -1087,13 +1058,13 @@ class Terminal(object):
                         char_msb = char & 0xf0
                         if char_msb == 0x20:
                             # Intermediate bytes (added to function)
-                            self.vt100_parse_func += unichr(char)
+                            self.vt100_parse_func += chr(char)
                         elif char_msb == 0x30 and self.vt100_parse_state == 'csi':
                             # Parameter byte
-                            self.vt100_parse_param += unichr(char)
+                            self.vt100_parse_param += chr(char)
                         else:
                             # Function byte
-                            self.vt100_parse_func += unichr(char)
+                            self.vt100_parse_func += chr(char)
                             self.vt100_parse_process()
                         return True
         self.vt100_lastchar = char
@@ -1131,6 +1102,7 @@ class Terminal(object):
 
     def pipe(self, d):
         o = ''
+        d = self.utf8_decode(d)
         for c in d:
             char = ord(c)
             if self.vt100_keyfilter_escape:
@@ -1194,14 +1166,12 @@ class Terminal(object):
                     attr_ = attr
                 wx += self.utf8_charwidth(char)
                 if wx <= self.w:
-                    line[-1] += unichr(char)
+                    line[-1] += chr(char)
             screen.append(line)
 
         return (cx, cy), screen
 
-
-
-
+        
 
 def synchronized(func):
     def wrapper(self, *args, **kwargs):
@@ -1218,11 +1188,7 @@ def synchronized(func):
     return wrapper
 
 
-
-
 class Multiplexer(object):
-
-
     def __init__(self, cmd="/bin/bash", env_term = "xterm-color", timeout=60*60*24):
         # Set Linux signal handler
         if sys.platform in ("linux2", "linux3"):
@@ -1361,7 +1327,7 @@ class Multiplexer(object):
 
     @synchronized
     def proc_buryall(self):
-        for sid in self.session.keys():
+        for sid in list(self.session.keys()):
             self.proc_bury(sid)
 
 
@@ -1389,6 +1355,7 @@ class Multiplexer(object):
         term.write(d)
         # Read terminal response
         d = term.read()
+        d = d.encode('utf-8')
         if d:
             try:
                 os.write(fd, d)
@@ -1410,7 +1377,7 @@ class Multiplexer(object):
             term = self.session[sid]['term']
             d = term.pipe(d)
             fd = self.session[sid]['fd']
-            os.write(fd, d)
+            os.write(fd, d.encode("utf-8"))
         except (IOError, OSError):
             return False
         return True
@@ -1425,7 +1392,6 @@ class Multiplexer(object):
             return False
         return self.session[sid]['term'].dump()
 
-
     @synchronized
     def proc_getalive(self):
         """
@@ -1434,7 +1400,7 @@ class Multiplexer(object):
         fds = []
         fd2sid = {}
         now = time.time()
-        for sid in self.session.keys():
+        for sid in list(self.session.keys()):
             then = self.session[sid]['time']
             if (now - then) > self.timeout:
                 self.proc_bury(sid)
@@ -1465,7 +1431,6 @@ class Multiplexer(object):
         self.proc_buryall()
 
 
-
 def ssh_command(login, executable="ssh"):
     cmd = executable
     cmd += ' -oPreferredAuthentications=keyboard-interactive,password'
@@ -1473,8 +1438,6 @@ def ssh_command(login, executable="ssh"):
     cmd += ' -oLogLevel=FATAL'
     cmd += ' -F/dev/null -l' + login +' localhost'
     return cmd
-
-
 
 
 class Session(object):
@@ -1487,7 +1450,10 @@ class Session(object):
 
     def __init__(self, cmd=None, width=80, height=24):
         if not Session._mux:
-            Session._mux = Multiplexer()
+            if cmd != None:
+                Session._mux = Multiplexer(cmd=cmd)
+            else:
+                Session._mux = Multiplexer()
         self._session_id = "%s-%s" % (time.time(), id(self))
         self._width = width
         self._height = height
@@ -1526,15 +1492,12 @@ class Session(object):
         if self.keepalive():
             return Session._mux.proc_dump(self._session_id)
 
-
     def write(self, data):
         if self.keepalive():
             Session._mux.proc_write(self._session_id, data)
 
-
     def last_change(self):
         return Session._mux.session.get(self._session_id, {}).get("changed", None)
-
     
     def pid(self):
         return Session._mux.session.get(self._session_id, {}).get("pid", None)
@@ -1542,13 +1505,20 @@ class Session(object):
 
 
 if __name__ == "__main__":
-    w, h = (80,24)
-    cmd = "/bin/ls --color=yes"
-    multiplex = Multiplexer(cmd)
-    sid = "session-id-%s"
-    if multiplex.proc_keepalive(sid, w, h):
-        #multiplex.proc_write(sid, k)
+    cmd = "/bin/bash"
+    Session._mux = Multiplexer(cmd)
+
+    s = Session()
+    while s.keepalive():
+        s.write(input().encode('utf-8')+b'\n')
         time.sleep(1)
-        #print multiplex.proc_dump(sid)
-        print "Output:", multiplex.proc_dump(sid)
+        print("Output:" )
+        _, screen = s.dump()
+        for row, line in enumerate(screen):
+            for i in line:
+                if type(i) == str:
+                    print(i, end='')
+            print(row)
+
+
     multiplex.stop()
