@@ -83,7 +83,8 @@ class TerminalWidget(QWidget):
 
 
     def __init__(self, parent=None, command="/bin/bash", 
-                 font_name="Monospace", font_size=18):
+                 font_name="Monospace", font_size=18,
+                 screen_update_time = 250):
         super(TerminalWidget, self).__init__(parent)
         self.parent().setTabOrder(self, self)
         self.setFocusPolicy(Qt.WheelFocus)
@@ -105,6 +106,7 @@ class TerminalWidget(QWidget):
         self._press_pos = None
         self._selection = None
         self._clipboard = QApplication.clipboard()
+        self._screen_update_time = screen_update_time
         QApplication.instance().lastWindowClosed.connect(Session.close_all)
         if command:
             self.execute()
@@ -150,7 +152,7 @@ class TerminalWidget(QWidget):
             return
         if self._timer_id is not None:
             self.killTimer(self._timer_id)
-        self._timer_id = self.startTimer(250)
+        self._timer_id = self.startTimer(self._screen_update_time)
         self.update_screen()
 
 
