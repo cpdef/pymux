@@ -27,6 +27,41 @@ import itertools
 
 __version__ = "0.1"
 
+class History(collections.deque):
+    def __init__(self, maxlen=500):
+        super().__init__([], maxlen)
+
+    def write_line(self, line):
+        self.appendleft(line)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return itertools.islice(self, index.start, index.stop, index.step)
+        return collections.deque.__getitem__(self, index)
+
+    def scrollback(self, lines, terminal_height):
+        lenght = len(self)
+        if lines >= lenght:
+            #raise ValueError('{}: scrollback exceeds maxlen'.format(self))
+            lines = lenght
+        end = lines-terminal_height
+        if end < 0:
+            end = 0
+        result = self[end:lines]
+        return result
+
+    def join_to_screen(self, screen, h, scrollback):
+        result = array.array('i', [])
+        for line in self.scrollback(scrollback, h):
+            result = line + result
+                
+        if len(result) < len(screen):
+            result = result+screen[:len(screen)-len(result)]   
+
+        return result
+
+
+
 class Terminal(object):
     def __init__(self, w, h):
         self.w = w
@@ -162,6 +197,7 @@ class Terminal(object):
             'k':'\x1b[23~',
             'l':'\x1b[24~',
         }
+        self.history = History()
         self.reset_hard()
 
     # Reset functions
@@ -270,8 +306,16 @@ class Terminal(object):
 
     # Scrolling functions
     def scroll_area_up(self, y0, y1, n = 1):
+        self.history.write_line(self.peek(0, 0, 1, self.w))
+        # normaly: min(24-0, 1) = 1
         n = min(y1-y0, n)
-        self.poke(y0, 0, self.peek(y0 + n, 0, y1, self.w))        
+        # most times it would be: y0 = 0, y1 = self.h (default 24)
+        # example for next lines: 
+        # 0, 0, peek(1, 0, 24, 80) - from begin the text from line 1 down is written
+        self.poke(y0, 0, self.peek(y0 + n, 0, y1, self.w))
+        # clear may do:
+        # poke(23, 0, array.array('i', [self.attr | 0x20] * (80*0+80-0 = 80)
+        # that means: put on screen line 23 noting
         self.clear(y1-n, 0, y1, self.w)
 
 
@@ -1128,7 +1172,9 @@ class Terminal(object):
         return o
 
 
-    def dump(self):
+    def dump(self, screenarray=None):
+        if screenarray == None:
+            screenarray = self.screen
         screen = []
         attr_ = -1
         cx, cy = min(self.cx, self.w - 1), self.cy
@@ -1136,7 +1182,7 @@ class Terminal(object):
             wx = 0
             line = [""]
             for x in range(0, self.w):
-                d = self.screen[y * self.w + x]
+                d = screenarray[y * self.w + x]
                 char = d & 0xffff
                 attr = d >> 16
                 # Cursor
@@ -1393,6 +1439,11 @@ class Multiplexer(object):
         return self.session[sid]['term'].dump()
 
     @synchronized
+    def proc_dump_history(self, sid, scrollback):
+        term = self.session[sid]['term']
+        return term.dump(term.history.join_to_screen(term.screen,term.h, scrollback))
+    
+    @synchronized
     def proc_getalive(self):
         """
         Get alive sessions, bury timed out ones
@@ -1492,12 +1543,18 @@ class Session(object):
         if self.keepalive():
             return Session._mux.proc_dump(self._session_id)
 
+    def dump_history(self, scrollback):
+        if self.keepalive():
+            return Session._mux.proc_dump_history(self._session_id, scrollback)
+
     def write(self, data):
         if self.keepalive():
             Session._mux.proc_write(self._session_id, data)
 
+
     def last_change(self):
         return Session._mux.session.get(self._session_id, {}).get("changed", None)
+
     
     def pid(self):
         return Session._mux.session.get(self._session_id, {}).get("pid", None)
@@ -1513,6 +1570,14 @@ if __name__ == "__main__":
         s.write(input().encode('utf-8')+b'\n')
         time.sleep(1)
         print("Output:" )
+        _, screen = s.dump_history(3)
+        for row, line in enumerate(screen):
+            for i in line:
+                if type(i) == str:
+                    print(i, end='')
+            print(row)
+
+        print('=======================================')
         _, screen = s.dump()
         for row, line in enumerate(screen):
             for i in line:
