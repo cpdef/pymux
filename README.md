@@ -1,4 +1,4 @@
-#Pymux - a Python terminal multiplexer
+# Pymux - a Python terminal multiplexer
 
 This multiplexer is in a realy early state, but it is already useable. I have taken the backend from pyqterm-0.2 and changed it for my issues.
 
@@ -6,7 +6,7 @@ This multiplexer is in a realy early state, but it is already useable. I have ta
 
 To see what i changed look in the commit history, maybe i made some changes before the first commit, which are not mentioned there
 
-###What i'll add later:
+#### What i'll add later:
 
 * Make a Terminal split mode
 * add colors (already supported by the backend)
@@ -16,12 +16,12 @@ To see what i changed look in the commit history, maybe i made some changes befo
 * ....
 * make it useable as an opponent to GNU screen or tmux
 
-###Features:
+#### Features:
 
 * start many sessions in a single console (multiplexer)
 * scroll the history also if u use it on a linux console
 
-###Setup:
+#### Setup:
 * install linux
 * Download the source
 * install ncurses
