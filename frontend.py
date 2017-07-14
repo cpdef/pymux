@@ -5,15 +5,24 @@ import os
 
 from signal import signal, SIGTSTP, SIGINT
 
-from time import sleep
+from time import sleep, time
 from backend import Session
 
 from enum import Enum
+from procinfo import ProcessInfo
 
 _print = print
 
 def print(*args):
-    raise NotImplementedError('print is not supported in curses', args)
+    try:
+        raise Exception()
+    except Exception as e:
+        lineno = e.__traceback__.tb_lineno
+        
+    _print('WARNING: print isn\'t supported in curses (line: {})'.format(lineno))
+    _print(*args)
+    sleep(3)
+    print = debug_print
 
 def debug_print(*args, t=1):
     _print(*args)
@@ -53,7 +62,7 @@ class CursesTerminalMultiplexer(object):
     MODE_MASTER = 1 # here u see the current sessions screen
     MODE_TERMINAL = 2  # in this mode u can control all sessions
  
-    def __init__(self, window, hidden=True):
+    def __init__(self, window, hidden=True, refresh_per_second=30):
         window.nodelay(1) #don't block with window.getch()
         
         # set w, h
@@ -69,6 +78,11 @@ class CursesTerminalMultiplexer(object):
         self.last_scrollback = 0
         self.last_scroll_screen = None
 
+        self.proc_info = ProcessInfo()
+
+        self.screen_rewrite_num = 1000
+        self.refresh_per_second = refresh_per_second
+        self.bar_text = ''
 
         self.mode = self.MODE_TERMINAL
 
@@ -123,6 +137,7 @@ class CursesTerminalMultiplexer(object):
             self.focus_session(0, 1)
         elif inp == curses.KEY_LEFT:
             self.focus_session(0, -1)
+        self.screen_rewrite_num = 1000
 
     def input(self, y, x, prompt, attr=0):
         self._window.nodelay(False)
@@ -172,6 +187,7 @@ class CursesTerminalMultiplexer(object):
             return (None, None), screen
 
     def write_on_window(self):
+        self.screen_rewrite_num += 1
         (cx, cy), screen = self.get_cursorscreen()
 
         # write the current screen to the window
@@ -183,22 +199,52 @@ class CursesTerminalMultiplexer(object):
                     text += element
             self._window.addstr(line_nr, 0, text)
 
-        # write statusbar:
-        bar_text = ''
-        for session in self.sessions:
-            if session is self.current_session():
-                bar_text += '_{}_ '.format(session.pid())
-            else:
-                bar_text += '{} '.format(session.pid())
-        bar_text += ' '*(self.width-len(bar_text))
+        if self.screen_rewrite_num >= 60:
+            self.screen_rewrite_num = 0
+            t1 = time()
+            # write statusbar:
+            self.bar_text = ''
+            cur_ses = self.current_session()
+            title = self.get_title
+            for i, session in enumerate(self.sessions):
+                pid = session.pid()
+                self.bar_text += '[<{}>{}] '.format(i, title(pid, session is cur_ses))
 
-        self._window.addstr(self.height-1, 0, bar_text[:self.width], curses.color_pair(1))
+            self.bar_text += ' '*(self.width-len(self.bar_text))
+            self.bar_text = self.bar_text[:self.width]
+        
+        self._window.addstr(self.height-1, 0, str(self.bar_text), curses.color_pair(1))
 
         # move to currents sessions cursor pos:
         if cy != None:
             self._window.move(cy, cx)
         
         self._window.refresh()
+
+    def get_title(self, pid, focus=False):
+        try:
+            self.proc_info.update()
+            child_pids = [pid,] + self.proc_info.all_children(pid)
+
+            top_pid = child_pids[-1]
+            cmd = self.proc_info.get_cmdline(top_pid).split(' ')[0]
+
+            for child_pid in reversed(child_pids):
+                cwd = self.proc_info.cwd(child_pid)
+                if cwd: 
+                    break
+        except ProcessLookupError:
+            return 'Terminal'
+
+
+        if not (cwd and cmd and top_pid):
+            return 'Terminal'
+
+        if focus:
+            return "{}: {} {}".format(os.path.basename(cwd), cmd, top_pid)
+        else:
+            return cmd
+
 
     def is_alive(self):
         if self.current_session().is_alive():
@@ -229,8 +275,16 @@ class CursesTerminalMultiplexer(object):
         elif signal == SIGTSTP:
             self._write(self.keymap['SIGTSTP'])
 
-
-
+    def run(self):
+        while self.is_alive():
+            t = time()
+            self.get_input()
+            self.write_on_window()
+            # to reduce CPU-percentage:
+            wait_time = 1 / self.refresh_per_second - (time() - t)
+            if wait_time < 0:
+                wait_time = 0
+            sleep(wait_time)
 
 def main(stdscr):
     try:
@@ -239,16 +293,14 @@ def main(stdscr):
     
         # create terminal:
         win = curses.newwin(100, 100, 0, 0)
-        term = CursesTerminalMultiplexer(stdscr, False)
+        mux = CursesTerminalMultiplexer(stdscr, False)
 
         # bin signals:
-        signal(SIGINT, term.signal_handler)
-        signal(SIGTSTP, term.signal_handler)
+        signal(SIGINT, mux.signal_handler)
+        #signal(SIGTSTP, term.signal_handler)
 
         # run terminal:
-        while term.is_alive():
-            term.get_input()
-            term.write_on_window()
+        mux.run()
     except Exception as e:
         # close all terminals if there is an bug/error in this program
         Session.close_all()
