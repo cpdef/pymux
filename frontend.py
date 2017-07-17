@@ -286,28 +286,29 @@ class CursesTerminalMultiplexer(object):
                 wait_time = 0
             sleep(wait_time)
 
-def main(stdscr):
-    try:
-        # init colors:
-        curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_RED)
+if __name__ == '__main__':
+    def main(stdscr):
+        try:
+            # init colors:
+            curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_RED)
     
-        # create terminal:
-        win = curses.newwin(100, 100, 0, 0)
-        mux = CursesTerminalMultiplexer(stdscr, False)
+            # create terminal:
+            win = curses.newwin(100, 100, 0, 0)
+            mux = CursesTerminalMultiplexer(stdscr, False)
 
-        # bin signals:
-        signal(SIGINT, mux.signal_handler)
-        #signal(SIGTSTP, term.signal_handler)
+            # bin signals:
+            signal(SIGINT, mux.signal_handler)
+            #signal(SIGTSTP, term.signal_handler)
 
-        # run terminal:
-        mux.run()
-    except Exception as e:
-        # close all terminals if there is an bug/error in this program
-        Session.close_all()
-        raise e
+            # run terminal:
+            mux.run()
+        except Exception as e:
+            # close all terminals if there is an bug/error in this program
+            Session.close_all()
+            raise e
 
    
-    # close all sessions:
-    Session.close_all()
+        # close all sessions:
+        Session.close_all()
 
-curses.wrapper(main)
+    curses.wrapper(main)
