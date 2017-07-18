@@ -10,6 +10,28 @@ from procinfo import ProcessInfo
 
 proc_info = ProcessInfo()
 
+# TODO: write a module for procinfo+get_title
+def get_title(pid, focus=False):
+    try:
+        proc_info.update()
+        child_pids = [pid,] + proc_info.all_children(pid)
+        top_pid = child_pids[-1]
+        cmd = self.get_cmdline(top_pid).split(' ')[0]
+
+        for child_pid in reversed(child_pids):
+            cwd = proc_info.cwd(child_pid)
+            if cwd: 
+                break
+    except ProcessLookupError:
+        return 'Terminal'
+    
+    if not (cwd and cmd and top_pid):
+        return 'Terminal'
+    if focus:
+        return "{}: {} {}".format(os.path.basename(cwd), cmd, top_pid)
+    else:
+        return cmd
+
 class Terminal(object):
     keymap = {
             'SIGTSTP' : b'\x1a',
@@ -41,14 +63,21 @@ class Terminal(object):
             curses.KEY_UP : b'~A',
     }
  
-    def __init__(self, window):
-        window.nodelay(1) #don't block with window.getch()
+    def __init__(self, parent_window, width=None, height=None, top=0, left=0):
+        h, w = parent_window.getmaxyx()
+        if not width:
+            width = w
+        if not height:
+            height = h-1
+        win = curses.newwin(height, width, top, left)
+        win.nodelay(1)
         
         # set w, h
-        self.height, self.width = window.getmaxyx()
+        self.height, self.width = win.getmaxyx()
         self.width -= 1; self.height -= 1; #max is max-1
         self.session = Session(width=self.width, height = self.height)
-        self._window = window
+        self.pid = self.session.pid
+        self._window = win
 
         self.scrollback = 0
         self.last_scrollback = 0
@@ -90,7 +119,7 @@ class Terminal(object):
         (cx, cy), screen = self.get_cursorscreen()
 
         # write the current screen to the window
-        self._window.clear()
+        self._window.erase()
         for line_nr, line in enumerate(screen):
             text = ''
             for element in line:
@@ -103,32 +132,7 @@ class Terminal(object):
             self._window.move(cy, cx)
         
         self._window.refresh()
-
-    def get_title(self, focus=False):
-        pid = self.session.pid
-        try:
-            proc_info.update()
-            child_pids = [pid,] + proc_info.all_children(pid)
-
-            top_pid = child_pids[-1]
-            cmd = self.get_cmdline(top_pid).split(' ')[0]
-
-            for child_pid in reversed(child_pids):
-                cwd = proc_info.cwd(child_pid)
-                if cwd: 
-                    break
-        except ProcessLookupError:
-            return 'Terminal'
-
-
-        if not (cwd and cmd and top_pid):
-            return 'Terminal'
-
-        if focus:
-            return "{}: {} {}".format(os.path.basename(cwd), cmd, top_pid)
-        else:
-            return cmd
-
+        
     def is_alive(self):
         return self.session.is_alive()
 
@@ -138,15 +142,42 @@ class Terminal(object):
     def cancel(self):
         self._write(self.keymap[curses.KEY_CANCEL])
 
-    def run(self):
+    def run(self):     
         self.session.keepalive()
+
+
+class StatusBar(object):
+    def __init__(self, width, top, left):
+        height = 2
+        self.width = width
+        self._window = curses.newwin(height, width, top, left)
+        self.text = ''
+        self.focused_pid = 0
+
+    def set_focus(self, terminal):
+        self.fucused_pid = terminal.pid
+
+    def clear(self):
+        sell._window.clear()
+
+    def add_terminal(self, pid):
+        self.text += '[{}]'.format(get_title(pid, pid==self.fucused_pid))
+
+    def refresh(self):
+        text = (self.text+self.width*' ')[:self.width]
+        self._window.addstr(0, 0, text, curses.color_pair(1))
+        self._window.refresh()
+
 
 class TerminalContainer(object):
     def __init__(self, window):
         self._window = window
+        self.height, self.width = window.getmaxyx()
         self.terminals = []
         self.focused = None
         self.add_terminal()
+        self.statusbar = StatusBar(self.width, self.height-1, 0)
+        self.refreshs = 0
         print('Container created!')
 
     def add_terminal(self):
@@ -187,6 +218,9 @@ class TerminalContainer(object):
         index = index % len(self.terminals)
         self.focused = self.terminals[index]
 
+    def has_focus(self, terminal):
+        return terminal is self.focused
+
     def input(self, y, x, prompt, attr=0):
         self._window.nodelay(False)
         curses.echo()
@@ -199,10 +233,19 @@ class TerminalContainer(object):
     def run(self):
         print('run Container... ')
         while self.is_alive():
+            t1 = time()
+            self.refreshs += 1
+
+            if not self.refreshs % 60:
+                self.statusbar.refresh()
             inp = self.focused.get_input()
             self.focused.send_key(inp)
             self.focused.refresh()
-            sleep(1/30)
+                        
+            # reduce cpu-percentage:
+            sleeptime = (1/30) - (time()-t1)
+            if sleeptime > 0:
+                sleep(sleeptime)
         
 if __name__ == '__main__':
     def main(stdscr):
